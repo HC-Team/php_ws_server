@@ -54,3 +54,8 @@ $RECYCLE.BIN/
 
 # Windows shortcuts
 *.lnk
+
+.*
+ssl_*
+support*
+*.pid
