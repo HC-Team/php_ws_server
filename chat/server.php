@@ -51,8 +51,8 @@ consolemsg("daemon run\n");
 // include the web sockets server script (the server is started at the far bottom of this file)
 require 'class.PHPWebSocket.php';
 $pach=dirname(__DIR__).'/';
-$db = new SQLite3('mysqlitedb.db');
-$db->exec('CREATE TABLE IF NOT EXISTS chanel (id INT, name CHAR(500),date_cr DATETIME,dat_end DATETIME);');
+$db = new SQLite3(__DIR__.'/ws_chanels.db');
+$db->exec('CREATE TABLE IF NOT EXISTS chanel (id INT, name CHAR(250),type INT,key CHAR(64),date_cr DATETIME,dat_end DATETIME);');
 //$db->exec('CREATE TABLE IF NOT EXISTS chanel_follow (id_chanel INT, id_follow INT,date_cr DATETIME);');
 //$db->exec("delete from chanel ");
 
@@ -70,9 +70,21 @@ function channel_list_fill($clientID='')
     global $Server,$pid,$db;
     $Server->chanel_list=array();
     $results = $db->query('SELECT * FROM chanel');
-    while ($row = $results->fetchArray()) {
+    $re=0;
+    while ($row = $results->fetchArray()) {$re++;
         $follow='no';if($clientID!='' and isset($Server->chanel_follow_list[$row['id']][$clientID])){$follow='yes';}
-        $Server->chanel_list[$row['id']]=array('name'=>$row['name'],'dat_end'=>$row['dat_end'],'follow'=>$follow);
+        $Server->chanel_list[$row['id']]=array('name'=>$row['name'],'type'=>$row['type'],'dat_end'=>$row['dat_end'],'follow'=>$follow);
+    }
+    if($re==0)
+    {
+        $db->exec("INSERT INTO chanel VALUES('1000001','channel 1','0','',datetime('now'),datetime('now','+7 days'));");
+        $db->exec("INSERT INTO chanel VALUES('1000002','channel 2','0','',datetime('now'),datetime('now','+7 days'));");
+        $db->exec("INSERT INTO chanel VALUES('1000003','channel 3','0','',datetime('now'),datetime('now','+7 days'));");
+        $db->exec("INSERT INTO chanel VALUES('1000004','create','0','',datetime('now'),datetime('now','+7 days'));");
+        $db->exec("INSERT INTO chanel VALUES('1000005','login','0','',datetime('now'),datetime('now','+7 days'));");
+        $db->exec("INSERT INTO chanel VALUES('1000006','open','0','',datetime('now'),datetime('now','+7 days'));");
+        $db->exec("INSERT INTO chanel VALUES('1000007','click','0','',datetime('now'),datetime('now','+7 days'));");
+        channel_list_fill($clientID);
     }
 }
 // when a client sends data to the server
@@ -95,19 +107,42 @@ function wsOnMessage($clientID, $message, $messageLength, $binary)
    {
 	    $start = microtime(true);
 	    $ip = long2ip($Server->wsClients[$clientID][6]);
+	    try{
 	    $msg=json_decode($message);
+	    }
+	    catch (Exception $e)
+	    {
+	        $echo['type']='';
+	        $echo['status']='error';
+	        $echo['code']='001';
+	        $echo['dat']=date('Y.m.d H:i:s',time());
+	        $Server->wsSend($clientID,json_encode($echo));
+	         
+	    }
 	    $message='';if(isset($msg->data)){$message=strip_tags($msg->data);}
      
 	if($msg->type=='create_chanel')
 	{
-	    $chanel_id=time();
+	    $msg->data = preg_replace ("/[^a-zA-Z0-9_-\s]/","",$msg->data);
+	    if($msg->type!==0 and $msg->type!==1){$msg->type=0;} // 0 public  1 privat  в планах сделать доступ только по RSA подписи
+	    
+	    $chanel_id=uniqid();
 	    $echo['type']='create_chanel';
 	    $echo['status']='ok';
 	    $echo['dat']=date('Y.m.d H:i:s',time());
 	    $echo['dat_end']=date('Y.m.d H:i:s',time()+360*24*7);
 	    $echo['name']=$msg->data;
+	    $echo['type']=$msg->type;
 	    //$Server->chanel_list[$chanel_id]=$msg->data;
-	    $db->exec("INSERT INTO chanel VALUES('".$chanel_id."','".$msg->data."',datetime('now'),datetime('now','+7 days'));");
+	    $key='';
+	    if($msg->data!='')
+	    {
+	    $db->exec("INSERT INTO chanel VALUES('".$chanel_id."','".$msg->data."','".$msg->type."','$key',datetime('now'),datetime('now','+7 days'));");
+	    }
+	    else
+	    {
+	        $echo['status']='error';
+	    }
 	    channel_list_fill($clientID);	    
 	    $Server->wsSend($clientID,json_encode($echo));
 	}
@@ -142,6 +177,8 @@ function wsOnMessage($clientID, $message, $messageLength, $binary)
 	}
 	elseif($msg->type=='follow_channel')
 	{
+	    if(isset($Server->chanel_list[$msg->id]))
+	    {
 	    $echo['type']='channel_'.$msg->id;
 	    $echo['status']='ok';
 	    $echo['dat']=date('Y.m.d H:i:s',time());
@@ -153,6 +190,14 @@ function wsOnMessage($clientID, $message, $messageLength, $binary)
 	           $echo['msg']='double sign';
 	       }
 	    $echo['data']=$Server->chanel_follow_list[$msg->id];
+	    }
+	    else
+	    {
+	        $echo['type']='channel_'.$msg->id;
+	        $echo['status']='error';
+	        $echo['dat']=date('Y.m.d H:i:s',time());
+	        $echo['msg']='access denied';
+	    }
 	    $Server->wsSend($clientID,json_encode($echo));
 	}
 	elseif($msg->type=='unfollow_channel')
@@ -173,12 +218,21 @@ function wsOnMessage($clientID, $message, $messageLength, $binary)
 	    $echo['channel']['name']=$Server->chanel_list[$msg->id]['name'];
 	    $echo['channel']['id']=$msg->id;
 	    $echo['msg']=$msg->msg;
+	    $count=0;
 	    if(isset($Server->chanel_follow_list[$msg->id]))
 	    {
 	       foreach ($Server->chanel_follow_list[$msg->id] as $k=>$v){
 	        $Server->wsSend($v,json_encode($echo));
+	        $count++;
 	       }
 	    }
+	    $echo=array();
+	    $echo['status']='ok';
+	    $echo['dat']=date('Y.m.d H:i:s',time());
+	    $echo['channel']['name']=$Server->chanel_list[$msg->id]['name'];
+	    $echo['channel']['id']=$msg->id;
+	    $echo['count']=$count;
+	    $Server->wsSend($clientID,json_encode($echo));
 	}
 	elseif($msg->type=='ping')
 	{

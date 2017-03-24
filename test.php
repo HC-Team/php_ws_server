@@ -1,5 +1,5 @@
 <?php
-$ws = new PHP_WS(array('host' => 'buldakoff.com','port' => 8080,'path' => '_ws_'));
+$ws = new PHP_WS(array('host' => 'buldakoff.ru','port' => 8080,'path' => '_ws_'));
 $msg=array();
 if(isset($_GET['id']))
 {
@@ -63,7 +63,8 @@ class PHP_WS
 	
 	public function connect()
 	{
-		$sock = fsockopen($this->params['host'], $this->params['port'], $errno, $errstr, 2);
+		$sock = fsockopen($this->params['host'], $this->params['port'], $errno, $errstr);
+		stream_set_timeout($sock, 1);
 		fwrite($sock, $this->head);
 		$headers = fread($sock, 2000);
 		$this->instance = $sock;		
